@@ -20,14 +20,14 @@ TOP_OUTER_RADIUS = 45.0   # mm — outer radius at the rim  (wider)
 HEIGHT           = 100.0  # mm — total cup height
 WALL_THICKNESS   =  3.0   # mm — side wall thickness (inner stays smooth)
 FLOOR_THICKNESS  =  3.0   # mm — base plate thickness
-SECTIONS         = 2000    # vertices per ring
-WALL_SEGMENTS    = 2000    # vertical ring subdivisions — needs enough to
+SECTIONS         = 1000    # vertices per ring
+WALL_SEGMENTS    = 1000    # vertical ring subdivisions — needs enough to
                           # capture crater curvature along the height
 
 # ── Crater parameters ─────────────────────────────────────────────────────────
-NUM_CELLS    =  300    # number of Voronoi cells (= number of craters)
+NUM_CELLS    =  200    # number of Voronoi cells (= number of craters)
 CRATER_DEPTH =  1   # mm — depth of each pool below the cup surface
-RANDOM_SEED  =  537357    # change this for a different random arrangement
+RANDOM_SEED  =  53799    # change this for a different random arrangement
 
 # Pool cross-section is split into three zones (fractions of the cell radius):
 #
@@ -38,10 +38,16 @@ RANDOM_SEED  =  537357    # change this for a different random arrangement
 #                        rounded wall
 #
 # POOL_FLOOR + POOL_BARRIER must be < 1.0 (the remainder becomes the wall).
-POOL_FLOOR   = 0.7   # fraction of cell radius that is flat pool floor
-POOL_BARRIER = 0.2   # fraction of cell radius that is flat barrier between pools
+POOL_FLOOR   = 0.25   # fraction of cell radius that is flat pool floor
+POOL_BARRIER = 0.25   # fraction of cell radius that is flat barrier between pools
 
-BAND_WIDTH   = 5.0   # mm — flat (crater-free) band at the top and bottom of the cup
+CELL_ROUNDNESS   = 3.0   # mm — smooth-min radius for cell corner rounding.
+                          #      0 = hard polygonal Voronoi corners.
+                          #      Higher values soften where three cells meet.
+BAND_WIDTH       = 5.0   # mm — flat (crater-free) band at the top and bottom of the cup
+BAND_TRANSITION  = 8.0   # mm — ramp width inside the crater zone where depth fades
+                          #      from 0 → full at the bottom, and full → 0 at the top.
+                          #      Keeps wall angles printable by avoiding sudden steps.
 
 OUTPUT_FILE = "crater_cup.stl"
 # ────────────────────────────────────────────────────────────────────────────
@@ -87,7 +93,7 @@ def make_crater_cup(
     height, wall_thickness, floor_thickness,
     sections, wall_segments,
     num_cells, crater_depth, random_seed,
-    pool_floor, pool_barrier, band_width,
+    pool_floor, pool_barrier, band_width, band_transition, cell_roundness,
 ):
     """
     Build a hollow tapered cup with Voronoi-cell depressions on the outer wall.
@@ -149,6 +155,18 @@ def make_crater_cup(
         if z < band_width or z > H - band_width:
             return np.zeros(n)
 
+        # Smooth fade in/out near the band edges so crater depth ramps gradually
+        # from 0 → full over `band_transition` mm.  This prevents the abrupt
+        # radial step that would create an overhang at the band boundary.
+        # Smoothstep: f(s) = 3s² − 2s³  — zero slope at both ends.
+        fade = 1.0
+        if z < band_width + band_transition:
+            s = (z - band_width) / band_transition
+            fade = 3*s**2 - 2*s**3
+        elif z > H - band_width - band_transition:
+            s = (H - band_width - z) / band_transition
+            fade = 3*s**2 - 2*s**3
+
         # Angular arc-length distance from each vertex to each seed: (n, C)
         d_theta = np.abs(angles[:, None] - seed_theta[None, :])
         d_theta = np.minimum(d_theta, 2 * np.pi - d_theta)   # shortest arc
@@ -165,6 +183,20 @@ def make_crater_cup(
         part = np.partition(dists, 1, axis=1)
         d1   = part[:, 0]   # distance to nearest seed       (n,)
         d2   = part[:, 1]   # distance to second-nearest seed (n,)
+
+        # Optional corner rounding via smooth-minimum (Inigo Quilez smin).
+        # At a Voronoi vertex (triple-point) d1 ≈ d2, so the standard formula
+        # gives t_cell ≈ 1 (flat barrier) from three directions simultaneously,
+        # forming a sharp ridge.  The smooth-min blends d1 slightly toward d2
+        # near boundaries, pulling those corner points back into the wall zone.
+        #
+        #   h = clip(0.5 + 0.5*(d2-d1)/k, 0, 1)
+        #   smooth_d1 = lerp(d2, d1, h) - k·h·(1-h)
+        #
+        # k=0 → no change; larger k → wider blending zone, rounder corners.
+        if cell_roundness > 0:
+            h  = np.clip(0.5 + 0.5 * (d2 - d1) / cell_roundness, 0.0, 1.0)
+            d1 = d2 * (1.0 - h) + d1 * h - cell_roundness * h * (1.0 - h)
 
         # Normalised position within cell: 0 at centre, 1 at Voronoi boundary
         t_cell = d1 / np.maximum(d2, 1e-9)
@@ -194,7 +226,7 @@ def make_crater_cup(
 
         # Zone 3 (t > wall_end): flat surface, disp stays 0
 
-        return disp
+        return disp * fade
 
     # ── Ring builders ─────────────────────────────────────────────────────
     def ring(radius, z):
@@ -290,6 +322,8 @@ if __name__ == "__main__":
         pool_floor=POOL_FLOOR,
         pool_barrier=POOL_BARRIER,
         band_width=BAND_WIDTH,
+        band_transition=BAND_TRANSITION,
+        cell_roundness=CELL_ROUNDNESS,
     )
 
     cup.export(OUTPUT_FILE)
