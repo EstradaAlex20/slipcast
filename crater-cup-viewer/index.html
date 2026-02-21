@@ -273,7 +273,8 @@ const params = {
   wallThickness  : 3,
   floorThickness : 3,
   // Craters
-  numCells       : 100,
+  numCells       : 300,   // upper cap; actual count determined by minCellSpacing
+  minCellSpacing : 8.0,   // mm — minimum distance between any two cell centres
   craterDepth    : 1.0,
   randomSeed     : 53799,
   // Profile
@@ -304,25 +305,100 @@ function makePRNG(seed) {
 }
 
 /**
- * Place seed points on the unwrapped cylinder using a jittered grid
- * (matches the Python _jittered_seeds logic exactly).
+ * Poisson disk sampling on the unwrapped cylinder surface (Bridson's algorithm).
+ *
+ * Works in arc-length coordinates (ts = Ravg·θ, zs = z−zMin) so that
+ * "minSpacing mm" means the same thing in every direction on the surface.
+ * The θ axis wraps around; the z axis does not.
+ *
+ * Guarantees every pair of seeds is at least minSpacing mm apart.
+ * Places up to maxCells seeds, then stops.
  */
-function jitteredSeeds(Ravg, H, numCells, rng, zMin, zMax) {
+function poissonDiskSeeds(Ravg, zMin, zMax, maxCells, minSpacing, rng) {
   const zRange      = zMax - zMin;
-  const surfaceWidth = 2 * Math.PI * Ravg;
-  const aspect      = surfaceWidth / zRange;
-  const ncols = Math.max(1, Math.round(Math.sqrt(numCells * aspect)));
-  const nrows = Math.max(1, Math.round(numCells / ncols));
+  const circ        = 2 * Math.PI * Ravg;   // circumference in mm
 
-  const seedTheta = [];
-  const seedZ     = [];
-  for (let r = 0; r < nrows; r++) {
-    for (let c = 0; c < ncols; c++) {
-      seedTheta.push((c + rng()) * (2 * Math.PI / ncols));
-      seedZ.push(zMin + (r + rng()) * (zRange / nrows));
+  // Background grid: cell diagonal = minSpacing  →  at most 1 sample per cell
+  const cellSize = minSpacing / Math.SQRT2;
+  const gridW    = Math.max(1, Math.ceil(circ   / cellSize));
+  const gridH    = Math.max(1, Math.ceil(zRange / cellSize));
+
+  const grid = new Int32Array(gridW * gridH).fill(-1);
+
+  const sTs = [];  // arc-length position [0, circ)
+  const sZs = [];  // z offset            [0, zRange)
+  const active = [];
+
+  function toGrid(ts, zs) {
+    const gx = ((Math.floor(ts / cellSize) % gridW) + gridW) % gridW;
+    const gz = Math.min(Math.floor(zs / cellSize), gridH - 1);
+    return gz * gridW + gx;
+  }
+
+  function surfDist(ts1, zs1, ts2, zs2) {
+    let dt = Math.abs(ts1 - ts2);
+    if (dt > circ / 2) dt = circ - dt;
+    return Math.sqrt(dt * dt + (zs1 - zs2) * (zs1 - zs2));
+  }
+
+  function tooClose(ts, zs) {
+    const gx = Math.floor(ts / cellSize);
+    const gz = Math.floor(zs / cellSize);
+    for (let dz = -2; dz <= 2; dz++) {
+      const nz = gz + dz;
+      if (nz < 0 || nz >= gridH) continue;
+      for (let dx = -2; dx <= 2; dx++) {
+        const nx = ((gx + dx) % gridW + gridW) % gridW;
+        const idx = grid[nz * gridW + nx];
+        if (idx === -1) continue;
+        if (surfDist(ts, zs, sTs[idx], sZs[idx]) < minSpacing) return true;
+      }
+    }
+    return false;
+  }
+
+  // Seed with one random point
+  const iTs = rng() * circ;
+  const iZs = rng() * zRange;
+  sTs.push(iTs); sZs.push(iZs);
+  active.push(0);
+  grid[toGrid(iTs, iZs)] = 0;
+
+  const K = 30;   // candidate attempts per active point
+  while (active.length > 0 && sTs.length < maxCells) {
+    const pick = Math.floor(rng() * active.length);
+    const pTs  = sTs[active[pick]];
+    const pZs  = sZs[active[pick]];
+    let placed = false;
+
+    for (let i = 0; i < K; i++) {
+      const angle = rng() * 2 * Math.PI;
+      const r     = minSpacing * (1 + rng());   // uniform in [minSpacing, 2·minSpacing]
+      const newTs = ((pTs + r * Math.cos(angle)) % circ + circ) % circ;
+      const newZs =   pZs + r * Math.sin(angle);
+
+      if (newZs < 0 || newZs > zRange) continue;
+      if (tooClose(newTs, newZs)) continue;
+
+      const ni = sTs.length;
+      sTs.push(newTs); sZs.push(newZs);
+      active.push(ni);
+      grid[toGrid(newTs, newZs)] = ni;
+      placed = true;
+      break;
+    }
+
+    if (!placed) {
+      // O(1) swap-remove
+      active[pick] = active[active.length - 1];
+      active.pop();
     }
   }
-  return { seedTheta, seedZ };
+
+  return {
+    seedTheta: sTs.map(ts => ts / Ravg),
+    seedZ:     sZs.map(zs => zs + zMin),
+  };
 }
 
 /**
@@ -337,7 +413,7 @@ function buildCraterCup(p) {
     botOuterRadius: Rbot,  topOuterRadius: Rtop,
     height: H,             wallThickness: wt,  floorThickness: ft,
     sections: n,           wallSegments: S,
-    numCells,              craterDepth,         randomSeed,
+    numCells,              minCellSpacing,      craterDepth,       randomSeed,
     poolFloor,             poolBarrier,
     bandWidth,             bandTransition,      cellRoundness,
   } = p;
@@ -354,9 +430,11 @@ function buildCraterCup(p) {
   const angles = new Float64Array(n);
   for (let i = 0; i < n; i++) angles[i] = (i / n) * 2 * Math.PI;
 
-  // Seed points (restricted to active zone above/below the flat bands)
+  // Seed points — Poisson disk sampling guarantees minCellSpacing between all seeds
   const rng = makePRNG(randomSeed);
-  const { seedTheta, seedZ } = jitteredSeeds(Ravg, H, numCells, rng, bandWidth, H - bandWidth);
+  const { seedTheta, seedZ } = poissonDiskSeeds(
+    Ravg, bandWidth, H - bandWidth, numCells, minCellSpacing, rng,
+  );
   const C = seedTheta.length;
 
   // ── Voronoi displacement for one ring at height z ────────────────
@@ -509,7 +587,7 @@ function buildCraterCup(p) {
   wallQuads(innerTopStart, innerBotStart);        // 4. inner wall (smooth)
   capFan(floorCenterIdx, innerBotStart, false);   // 5. inner floor
 
-  return { positions, indices };
+  return { positions, indices, cellCount: C };
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -673,15 +751,15 @@ function doRebuild() {
   setTimeout(() => {
     try {
       const t0 = performance.now();
-      const { positions, indices } = buildCraterCup(params);
+      const result = buildCraterCup(params);
       const dt = performance.now() - t0;
 
-      lastPositions = positions;
-      lastIndices   = indices;
-      updateMesh(positions, indices);
+      lastPositions = result.positions;
+      lastIndices   = result.indices;
+      updateMesh(result.positions, result.indices);
 
       const tris = (indices.length / 3).toLocaleString();
-      statusEl.textContent = `${tris} triangles · ${dt.toFixed(0)} ms`;
+      statusEl.textContent = `${result.cellCount} cells · ${tris} triangles · ${dt.toFixed(0)} ms`;
     } catch (e) {
       statusEl.textContent = e.message;
       statusEl.classList.add('error');
@@ -753,9 +831,11 @@ controlsEl.appendChild(makeGroup('Cup Shape', [
 ]));
 
 controlsEl.appendChild(makeGroup('Craters', [
-  { label: 'Number of Cells',      key: 'numCells',    min: 5,   max: 500,   step: 1   },
-  { label: 'Crater Depth (mm)',    key: 'craterDepth', min: 0,   max: 8,     step: 0.1 },
-  { label: 'Random Seed',          key: 'randomSeed',  min: 0,   max: 99999, step: 1   },
+  { label: 'Min Cell Spacing (mm)', key: 'minCellSpacing', min: 2, max: 40, step: 0.5,
+    note: 'Hard min distance between any two cell centres' },
+  { label: 'Max Cells (cap)',       key: 'numCells',    min: 5,   max: 600,   step: 1   },
+  { label: 'Crater Depth (mm)',     key: 'craterDepth', min: 0,   max: 8,     step: 0.1 },
+  { label: 'Random Seed',           key: 'randomSeed',  min: 0,   max: 99999, step: 1   },
 ]));
 
 controlsEl.appendChild(makeGroup('Profile', [

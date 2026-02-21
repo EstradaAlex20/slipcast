@@ -25,7 +25,11 @@ WALL_SEGMENTS    = 1000    # vertical ring subdivisions — needs enough to
                           # capture crater curvature along the height
 
 # ── Crater parameters ─────────────────────────────────────────────────────────
-NUM_CELLS    =  200    # number of Voronoi cells (= number of craters)
+NUM_CELLS        =  300    # maximum number of Voronoi cells; actual count
+                           # is determined by MIN_CELL_SPACING
+MIN_CELL_SPACING =  8.0   # mm — minimum distance between any two cell centres
+                           # on the unwrapped cylinder surface.
+                           # Larger → fewer, more spread-out craters.
 CRATER_DEPTH =  1   # mm — depth of each pool below the cup surface
 RANDOM_SEED  =  53799    # change this for a different random arrangement
 
@@ -53,39 +57,106 @@ OUTPUT_FILE = "crater_cup.stl"
 # ────────────────────────────────────────────────────────────────────────────
 
 
-def _jittered_seeds(R_avg, H, num_cells, rng, z_min=0.0, z_max=None):
+def _poisson_disk_seeds(R_avg, H, max_cells, rng, z_min=0.0, z_max=None, min_spacing=8.0):
     """
-    Place seed points on the cylinder using a jittered grid.
+    Place seed points on the cylinder using Poisson disk sampling
+    (Bridson's algorithm, adapted for a cylinder with wrap-around).
 
-    The unwrapped cylinder surface (width = 2π·R_avg, height = z_max-z_min) is
-    divided into an nrows × ncols grid of tiles, sized as square as possible.
-    One seed is placed at a uniformly random position within each tile.
+    Works in arc-length coordinates on the unwrapped surface:
+        ts = R_avg · θ   [0, 2π·R_avg)    — wraps around
+        zs = z − z_min   [0, z_range)     — does not wrap
 
-    z_min / z_max let the caller restrict seeding to a sub-range of the cup
-    height (used to keep seeds out of the flat top/bottom bands).
+    Guarantees every pair of seeds is at least min_spacing mm apart.
+    Places up to max_cells seeds, then stops.
 
-    Returns (seed_theta, seed_z), each of shape (nrows*ncols,).
+    Returns (seed_theta, seed_z), each a 1-D array of length ≤ max_cells.
     """
     if z_max is None:
         z_max = H
-    z_range = z_max - z_min
+    z_range       = z_max - z_min
+    circumference = 2 * np.pi * R_avg
 
-    surface_width = 2 * np.pi * R_avg
-    aspect = surface_width / z_range                    # width ÷ active height
+    # Background grid: cell diagonal = min_spacing → ≤1 sample per cell
+    cell_size = min_spacing / np.sqrt(2)
+    grid_w    = max(1, int(np.ceil(circumference / cell_size)))
+    grid_h    = max(1, int(np.ceil(z_range      / cell_size)))
 
-    ncols = max(1, round(np.sqrt(num_cells * aspect)))  # keep tiles roughly square
-    nrows = max(1, round(num_cells / ncols))
+    grid = np.full(grid_w * grid_h, -1, dtype=np.int32)   # -1 = empty
 
-    jitter_theta = rng.uniform(0, 1, (nrows, ncols))
-    jitter_z     = rng.uniform(0, 1, (nrows, ncols))
+    samples_ts: list[float] = []   # arc-length [0, circumference)
+    samples_zs: list[float] = []   # z offset   [0, z_range)
+    active:     list[int]   = []
 
-    col_idx = np.arange(ncols)
-    row_idx = np.arange(nrows)
+    def to_grid(ts, zs):
+        gx = int(ts / cell_size) % grid_w
+        gz = min(int(zs / cell_size), grid_h - 1)
+        return gz * grid_w + gx
 
-    theta = (col_idx[None, :] + jitter_theta) * (2 * np.pi / ncols)
-    z     = z_min + (row_idx[:, None] + jitter_z) * (z_range / nrows)
+    def surface_dist(ts1, zs1, ts2, zs2):
+        dt = abs(ts1 - ts2)
+        if dt > circumference / 2:
+            dt = circumference - dt
+        return np.sqrt(dt * dt + (zs1 - zs2) * (zs1 - zs2))
 
-    return theta.ravel(), z.ravel()
+    def too_close(ts, zs):
+        gx = int(ts / cell_size) % grid_w
+        gz = int(zs / cell_size)
+        for dz in range(-2, 3):
+            nz = gz + dz
+            if nz < 0 or nz >= grid_h:
+                continue
+            for dx in range(-2, 3):
+                nx = (gx + dx) % grid_w
+                idx = grid[nz * grid_w + nx]
+                if idx == -1:
+                    continue
+                if surface_dist(ts, zs, samples_ts[idx], samples_zs[idx]) < min_spacing:
+                    return True
+        return False
+
+    # First sample — random point anywhere in the active zone
+    init_ts = rng.uniform(0, circumference)
+    init_zs = rng.uniform(0, z_range)
+    samples_ts.append(init_ts)
+    samples_zs.append(init_zs)
+    active.append(0)
+    grid[to_grid(init_ts, init_zs)] = 0
+
+    k = 30   # candidate attempts per active point
+
+    while active and len(samples_ts) < max_cells:
+        pick  = int(rng.uniform(0, len(active)))
+        p_ts  = samples_ts[active[pick]]
+        p_zs  = samples_zs[active[pick]]
+        placed = False
+
+        for _ in range(k):
+            angle  = rng.uniform(0, 2 * np.pi)
+            r      = rng.uniform(min_spacing, 2 * min_spacing)
+            new_ts = (p_ts + r * np.cos(angle)) % circumference
+            new_zs =  p_zs + r * np.sin(angle)
+
+            if new_zs < 0 or new_zs > z_range:
+                continue
+            if too_close(new_ts, new_zs):
+                continue
+
+            new_idx = len(samples_ts)
+            samples_ts.append(new_ts)
+            samples_zs.append(new_zs)
+            active.append(new_idx)
+            grid[to_grid(new_ts, new_zs)] = new_idx
+            placed = True
+            break
+
+        if not placed:
+            # O(1) swap-remove
+            active[pick] = active[-1]
+            active.pop()
+
+    seed_theta = np.array(samples_ts) / R_avg
+    seed_z     = np.array(samples_zs) + z_min
+    return seed_theta, seed_z
 
 
 def make_crater_cup(
@@ -94,6 +165,7 @@ def make_crater_cup(
     sections, wall_segments,
     num_cells, crater_depth, random_seed,
     pool_floor, pool_barrier, band_width, band_transition, cell_roundness,
+    min_cell_spacing=8.0,
 ):
     """
     Build a hollow tapered cup with Voronoi-cell depressions on the outer wall.
@@ -137,9 +209,10 @@ def make_crater_cup(
     # Restrict seeds to [band_width, H - band_width] so no crater is centred
     # inside the flat margin bands at the top and bottom.
     rng = np.random.default_rng(random_seed)
-    seed_theta, seed_z = _jittered_seeds(
+    seed_theta, seed_z = _poisson_disk_seeds(
         R_avg, H, num_cells, rng,
         z_min=band_width, z_max=H - band_width,
+        min_spacing=min_cell_spacing,
     )
 
     # ── Voronoi displacement ───────────────────────────────────────────────
@@ -324,6 +397,7 @@ if __name__ == "__main__":
         band_width=BAND_WIDTH,
         band_transition=BAND_TRANSITION,
         cell_roundness=CELL_ROUNDNESS,
+        min_cell_spacing=MIN_CELL_SPACING,
     )
 
     cup.export(OUTPUT_FILE)
