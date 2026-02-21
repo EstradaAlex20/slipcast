@@ -1,0 +1,15 @@
+# Generated 3D model output
+*.stl
+*.obj
+*.ply
+*.3mf
+
+# Claude Code session data
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
