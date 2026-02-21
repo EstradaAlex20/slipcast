@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Crater Cup Designer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      display: flex;
+      height: 100vh;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 13px;
+      background: #0d0d14;
+      color: #ccd;
+      overflow: hidden;
+    }
+
+    /* ── Sidebar ──────────────────────────────────────────────────── */
+    #panel {
+      width: 272px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      background: #0f0f1a;
+      border-right: 1px solid #1e1e32;
+    }
+
+    #panel-header {
+      padding: 14px 16px 12px;
+      border-bottom: 1px solid #1e1e32;
+      flex-shrink: 0;
+    }
+
+    #panel-header h1 {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      color: #eef;
+    }
+
+    #panel-header p {
+      margin-top: 3px;
+      font-size: 11px;
+      color: #556;
+      line-height: 1.4;
+    }
+
+    #controls {
+      flex: 1;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: #222240 transparent;
+    }
+
+    #controls::-webkit-scrollbar { width: 4px; }
+    #controls::-webkit-scrollbar-thumb { background: #222240; border-radius: 2px; }
+
+    /* ── Groups ───────────────────────────────────────────────────── */
+    .group {
+      border-bottom: 1px solid #171726;
+    }
+
+    .group-header {
+      padding: 9px 16px 7px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+      color: #445;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .group-header::before { content: '▾'; color: #334; }
+
+    .group-body {
+      padding: 2px 16px 14px;
+    }
+
+    /* ── Sliders ──────────────────────────────────────────────────── */
+    .control { margin-top: 11px; }
+
+    .control-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 5px;
+    }
+
+    .control-label { font-size: 12px; color: #99a; }
+
+    .control-value {
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+      color: #7799ff;
+      min-width: 44px;
+      text-align: right;
+    }
+
+    .control-note {
+      margin-top: 3px;
+      font-size: 10px;
+      color: #334;
+      font-style: italic;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      height: 3px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: #232338;
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 13px;
+      height: 13px;
+      border-radius: 50%;
+      background: #4466ee;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+
+    input[type="range"]::-webkit-slider-thumb:hover { background: #6688ff; }
+    input[type="range"]::-moz-range-thumb {
+      width: 13px; height: 13px;
+      border-radius: 50%;
+      background: #4466ee;
+      border: none;
+      cursor: pointer;
+    }
+
+    /* ── Actions ──────────────────────────────────────────────────── */
+    #actions {
+      padding: 12px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      border-top: 1px solid #1e1e32;
+      flex-shrink: 0;
+    }
+
+    .btn-row { display: flex; gap: 7px; }
+    .btn-row button { flex: 1; }
+
+    button {
+      padding: 8px 10px;
+      border: none;
+      border-radius: 5px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s;
+      letter-spacing: 0.2px;
+    }
+
+    #btn-rebuild  { background: #2244bb; color: #ddf; }
+    #btn-rebuild:hover { background: #3355cc; }
+
+    #btn-wireframe { background: #1c1c2e; color: #778; }
+    #btn-wireframe:hover { background: #222240; color: #aab; }
+    #btn-wireframe.active { background: #1a2244; color: #88aaff; }
+
+    #btn-export { background: #14291a; color: #6c6; }
+    #btn-export:hover { background: #1a3320; }
+
+    /* ── Status ───────────────────────────────────────────────────── */
+    #status {
+      padding: 7px 16px;
+      font-size: 11px;
+      color: #445;
+      border-top: 1px solid #171726;
+      line-height: 1.5;
+      flex-shrink: 0;
+      min-height: 34px;
+    }
+
+    #status.error { color: #e05555; }
+
+    /* ── Viewport ─────────────────────────────────────────────────── */
+    #viewport {
+      flex: 1;
+      position: relative;
+      background: #0d0d14;
+    }
+
+    #viewport canvas { display: block; }
+
+    /* ── Loading overlay ──────────────────────────────────────────── */
+    #loading {
+      display: none;
+      position: absolute;
+      inset: 0;
+      background: rgba(13, 13, 20, 0.65);
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      color: #7799ff;
+      letter-spacing: 1px;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    #loading.visible { display: flex; }
+
+    .spinner {
+      width: 18px; height: 18px;
+      border: 2px solid #223;
+      border-top-color: #5577ff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      margin-right: 10px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<aside id="panel">
+  <div id="panel-header">
+    <h1>Crater Cup Designer</h1>
+    <p>Adjust sliders · rebuild updates automatically.</p>
+  </div>
+
+  <div id="controls"><!-- built by JS --></div>
+
+  <div id="actions">
+    <button id="btn-rebuild">Rebuild Now</button>
+    <div class="btn-row">
+      <button id="btn-wireframe">Wireframe</button>
+      <button id="btn-export">Export STL</button>
+    </div>
+  </div>
+
+  <div id="status">Ready</div>
+</aside>
+
+<main id="viewport">
+  <div id="loading"><div class="spinner"></div>Computing…</div>
+</main>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ═══════════════════════════════════════════════════════════════════
+// DEFAULT PARAMETERS
+// ═══════════════════════════════════════════════════════════════════
+
+const params = {
+  // Cup shape
+  botOuterRadius : 30,
+  topOuterRadius : 45,
+  height         : 100,
+  wallThickness  : 3,
+  floorThickness : 3,
+  // Craters
+  numCells       : 100,
+  craterDepth    : 1.0,
+  randomSeed     : 53799,
+  // Profile
+  poolFloor      : 0.25,
+  poolBarrier    : 0.25,
+  cellRoundness  : 3.0,
+  // Bands
+  bandWidth      : 5.0,
+  bandTransition : 8.0,
+  // Resolution (lower = faster preview)
+  sections       : 150,
+  wallSegments   : 150,
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// GEOMETRY GENERATOR
+// ═══════════════════════════════════════════════════════════════════
+
+/** Mulberry32 — fast, seedable PRNG. */
+function makePRNG(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6D2B79F5) >>> 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Place seed points on the unwrapped cylinder using a jittered grid
+ * (matches the Python _jittered_seeds logic exactly).
+ */
+function jitteredSeeds(Ravg, H, numCells, rng, zMin, zMax) {
+  const zRange      = zMax - zMin;
+  const surfaceWidth = 2 * Math.PI * Ravg;
+  const aspect      = surfaceWidth / zRange;
+  const ncols = Math.max(1, Math.round(Math.sqrt(numCells * aspect)));
+  const nrows = Math.max(1, Math.round(numCells / ncols));
+
+  const seedTheta = [];
+  const seedZ     = [];
+  for (let r = 0; r < nrows; r++) {
+    for (let c = 0; c < ncols; c++) {
+      seedTheta.push((c + rng()) * (2 * Math.PI / ncols));
+      seedZ.push(zMin + (r + rng()) * (zRange / nrows));
+    }
+  }
+  return { seedTheta, seedZ };
+}
+
+/**
+ * Build crater cup geometry.
+ * Returns { positions: Float32Array, indices: Uint32Array }
+ *
+ * Coordinate convention (Three.js y-up):
+ *   x = r·cos(angle),  y = height,  z = r·sin(angle)
+ */
+function buildCraterCup(p) {
+  const {
+    botOuterRadius: Rbot,  topOuterRadius: Rtop,
+    height: H,             wallThickness: wt,  floorThickness: ft,
+    sections: n,           wallSegments: S,
+    numCells,              craterDepth,         randomSeed,
+    poolFloor,             poolBarrier,
+    bandWidth,             bandTransition,      cellRoundness,
+  } = p;
+
+  const rBot = Rbot - wt;
+  const rTop = Rtop - wt;
+  const Ravg = (Rbot + Rtop) / 2;
+
+  if (rBot <= 0 || rTop <= 0) throw new Error('Wall thickness exceeds radius');
+  if (ft >= H)                throw new Error('Floor thickness must be less than height');
+  if (bandWidth * 2 >= H)     throw new Error('Band width too large for cup height');
+
+  // Angle for each vertex in a ring
+  const angles = new Float64Array(n);
+  for (let i = 0; i < n; i++) angles[i] = (i / n) * 2 * Math.PI;
+
+  // Seed points (restricted to active zone above/below the flat bands)
+  const rng = makePRNG(randomSeed);
+  const { seedTheta, seedZ } = jitteredSeeds(Ravg, H, numCells, rng, bandWidth, H - bandWidth);
+  const C = seedTheta.length;
+
+  // ── Voronoi displacement for one ring at height z ────────────────
+  function voronoiDisplacement(z) {
+    const disp = new Float64Array(n); // default: all zeros
+
+    if (z < bandWidth || z > H - bandWidth) return disp;
+
+    // Smoothstep fade near band edges  f(s) = 3s² − 2s³
+    let fade = 1.0;
+    if (z < bandWidth + bandTransition) {
+      const s = (z - bandWidth) / bandTransition;
+      fade = 3*s*s - 2*s*s*s;
+    } else if (z > H - bandWidth - bandTransition) {
+      const s = (H - bandWidth - z) / bandTransition;
+      fade = 3*s*s - 2*s*s*s;
+    }
+
+    // For each vertex find the two nearest seeds
+    const d1 = new Float64Array(n).fill(Infinity);
+    const d2 = new Float64Array(n).fill(Infinity);
+
+    for (let c = 0; c < C; c++) {
+      const dZ = Math.abs(z - seedZ[c]);
+      const st = seedTheta[c];
+      for (let i = 0; i < n; i++) {
+        let dt = Math.abs(angles[i] - st);
+        if (dt > Math.PI) dt = 2 * Math.PI - dt;
+        const dist = Math.sqrt((Ravg * dt) * (Ravg * dt) + dZ * dZ);
+        if (dist < d1[i]) { d2[i] = d1[i]; d1[i] = dist; }
+        else if (dist < d2[i]) d2[i] = dist;
+      }
+    }
+
+    // Optional corner rounding (Inigo Quilez smooth-min)
+    if (cellRoundness > 0) {
+      for (let i = 0; i < n; i++) {
+        const h = Math.min(1, Math.max(0, 0.5 + 0.5 * (d2[i] - d1[i]) / cellRoundness));
+        d1[i] = d2[i] * (1 - h) + d1[i] * h - cellRoundness * h * (1 - h);
+      }
+    }
+
+    // Three-zone profile:
+    //   [0, floorEnd]          → flat pool floor at full depth
+    //   [floorEnd, wallEnd]    → cubic Hermite wall  h(s)=2s³−3s²+1
+    //   [wallEnd, 1]           → flat barrier (zero displacement)
+    const floorEnd = poolFloor;
+    const wallEnd  = 1.0 - poolBarrier;
+
+    for (let i = 0; i < n; i++) {
+      const tc = d1[i] / Math.max(d2[i], 1e-9);
+      if (tc <= floorEnd) {
+        disp[i] = -craterDepth * fade;
+      } else if (tc <= wallEnd) {
+        const s = (tc - floorEnd) / (wallEnd - floorEnd);
+        disp[i] = -craterDepth * (2*s*s*s - 3*s*s + 1) * fade;
+      }
+    }
+    return disp;
+  }
+
+  // ── Allocate buffers ─────────────────────────────────────────────
+  // Vertex layout:
+  //   [0 … (S+1)*n - 1]         outer rings × (S+1)
+  //   [(S+1)*n … (S+2)*n - 1]   inner top ring
+  //   [(S+2)*n … (S+3)*n - 1]   inner bottom ring
+  //   (S+3)*n                    bottom-center vertex
+  //   (S+3)*n + 1                floor-center vertex
+  const numVerts = (S + 3) * n + 2;
+  const positions = new Float32Array(numVerts * 3);
+  let vi = 0;
+
+  function addVert(x, y, z) {
+    positions[vi*3]   = x;
+    positions[vi*3+1] = y;
+    positions[vi*3+2] = z;
+    return vi++;
+  }
+
+  // Outer rings — y = height (Three.js y-up)
+  const outerStart = new Int32Array(S + 1);
+  for (let k = 0; k <= S; k++) {
+    outerStart[k] = vi;
+    const t_  = k / S;
+    const z   = t_ * H;
+    const baseR = Rbot + (Rtop - Rbot) * t_;
+    const disp  = voronoiDisplacement(z);
+    for (let i = 0; i < n; i++) {
+      const r = baseR + disp[i];
+      const a = angles[i];
+      addVert(r * Math.cos(a), z, r * Math.sin(a));
+    }
+  }
+
+  // Inner top ring (at rim height, inner radius)
+  const innerTopStart = vi;
+  for (let i = 0; i < n; i++) {
+    const a = angles[i];
+    addVert(rTop * Math.cos(a), H, rTop * Math.sin(a));
+  }
+
+  // Inner bottom ring (at floor height, inner radius)
+  const innerBotStart = vi;
+  for (let i = 0; i < n; i++) {
+    const a = angles[i];
+    addVert(rBot * Math.cos(a), ft, rBot * Math.sin(a));
+  }
+
+  // Centre vertices
+  const botCenterIdx   = vi; addVert(0, 0,  0);
+  const floorCenterIdx = vi; addVert(0, ft, 0);
+
+  // ── Allocate index buffer ────────────────────────────────────────
+  // Triangles: n(base) + 2Sn(outer wall) + 2n(rim) + 2n(inner wall) + n(floor)
+  //          = n(2S + 6)
+  const numFaces = n * (2 * S + 6);
+  const indices  = new Uint32Array(numFaces * 3);
+  let fi = 0;
+
+  function addTri(a, b, c) {
+    indices[fi*3]   = a;
+    indices[fi*3+1] = b;
+    indices[fi*3+2] = c;
+    fi++;
+  }
+
+  // Same winding as Python's wall_quads(ring_a, ring_b)
+  function wallQuads(rA, rB) {
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      addTri(rA+i, rB+j, rB+i);
+      addTri(rA+i, rA+j, rB+j);
+    }
+  }
+
+  // Same winding as Python's cap_fan(center, ring, flip)
+  function capFan(center, ringStart, flip) {
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      if (flip) addTri(center, ringStart+j, ringStart+i);
+      else      addTri(center, ringStart+i, ringStart+j);
+    }
+  }
+
+  capFan(botCenterIdx, outerStart[0], true);     // 1. base cap (bottom)
+  for (let k = 0; k < S; k++) {
+    wallQuads(outerStart[k], outerStart[k+1]);   // 2. outer wall (cratered)
+  }
+  wallQuads(outerStart[S], innerTopStart);        // 3. rim (top lip)
+  wallQuads(innerTopStart, innerBotStart);        // 4. inner wall (smooth)
+  capFan(floorCenterIdx, innerBotStart, false);   // 5. inner floor
+
+  return { positions, indices };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// BINARY STL EXPORT
+// ═══════════════════════════════════════════════════════════════════
+
+function exportBinarySTL(positions, indices) {
+  const numTris = indices.length / 3;
+  const buf  = new ArrayBuffer(80 + 4 + numTris * 50);
+  const view = new DataView(buf);
+
+  // Header: write "crater_cup" in ASCII, rest stays 0
+  const enc = new TextEncoder();
+  const hdr = enc.encode('crater_cup');
+  for (let i = 0; i < hdr.length; i++) view.setUint8(i, hdr[i]);
+  view.setUint32(80, numTris, true);
+
+  let off = 84;
+  for (let f = 0; f < numTris; f++) {
+    const i0 = indices[f*3]*3, i1 = indices[f*3+1]*3, i2 = indices[f*3+2]*3;
+    const ax = positions[i0],   ay = positions[i0+1], az = positions[i0+2];
+    const bx = positions[i1],   by = positions[i1+1], bz = positions[i1+2];
+    const cx = positions[i2],   cy = positions[i2+1], cz = positions[i2+2];
+
+    // Face normal via cross product
+    const ux = bx-ax, uy = by-ay, uz = bz-az;
+    const vx = cx-ax, vy = cy-ay, vz = cz-az;
+    const nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
+    const nl = Math.sqrt(nx*nx + ny*ny + nz*nz) || 1;
+
+    view.setFloat32(off, nx/nl, true); off += 4;
+    view.setFloat32(off, ny/nl, true); off += 4;
+    view.setFloat32(off, nz/nl, true); off += 4;
+    view.setFloat32(off, ax,    true); off += 4;
+    view.setFloat32(off, ay,    true); off += 4;
+    view.setFloat32(off, az,    true); off += 4;
+    view.setFloat32(off, bx,    true); off += 4;
+    view.setFloat32(off, by,    true); off += 4;
+    view.setFloat32(off, bz,    true); off += 4;
+    view.setFloat32(off, cx,    true); off += 4;
+    view.setFloat32(off, cy,    true); off += 4;
+    view.setFloat32(off, cz,    true); off += 4;
+    view.setUint16(off, 0,      true); off += 2;
+  }
+  return buf;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// THREE.JS SCENE
+// ═══════════════════════════════════════════════════════════════════
+
+const viewport  = document.getElementById('viewport');
+const loadingEl = document.getElementById('loading');
+const statusEl  = document.getElementById('status');
+
+// Renderer
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(viewport.clientWidth, viewport.clientHeight);
+renderer.setClearColor(0x0d0d14);
+viewport.appendChild(renderer.domElement);
+
+// Scene
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x0d0d14, 400, 900);
+
+// Camera
+const camera = new THREE.PerspectiveCamera(45, viewport.clientWidth / viewport.clientHeight, 0.1, 2000);
+camera.position.set(110, 90, 190);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping  = true;
+controls.dampingFactor  = 0.07;
+controls.target.set(0, 50, 0);
+controls.update();
+
+// Lights
+scene.add(new THREE.AmbientLight(0x223355, 2.0));
+
+const sun = new THREE.DirectionalLight(0xfff5ee, 2.8);
+sun.position.set(80, 160, 120);
+scene.add(sun);
+
+const fill = new THREE.DirectionalLight(0x3355aa, 0.9);
+fill.position.set(-80, 30, -60);
+scene.add(fill);
+
+const rim = new THREE.DirectionalLight(0x224422, 0.6);
+rim.position.set(0, -80, -100);
+scene.add(rim);
+
+// Floor grid for visual reference
+const grid = new THREE.GridHelper(400, 24, 0x1a1a2e, 0x161624);
+grid.position.y = -1;
+scene.add(grid);
+
+// Materials
+const solidMat = new THREE.MeshStandardMaterial({
+  color      : 0xc8a580,
+  roughness  : 0.78,
+  metalness  : 0.04,
+  side       : THREE.DoubleSide,
+  polygonOffset      : true,
+  polygonOffsetFactor: 1,
+  polygonOffsetUnits : 1,
+});
+
+const wireMat = new THREE.MeshBasicMaterial({
+  color       : 0x3355aa,
+  wireframe   : true,
+  transparent : true,
+  opacity     : 0.25,
+});
+
+let cupMesh       = null;
+let wireMesh      = null;
+let showWireframe = false;
+let lastPositions = null;
+let lastIndices   = null;
+
+function updateMesh(positions, indices) {
+  // Dispose old geometry
+  if (cupMesh)  { scene.remove(cupMesh);  cupMesh.geometry.dispose();  cupMesh  = null; }
+  if (wireMesh) { scene.remove(wireMesh); wireMesh.geometry.dispose(); wireMesh = null; }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setIndex(new THREE.BufferAttribute(indices, 1));
+  geo.computeVertexNormals();
+
+  cupMesh = new THREE.Mesh(geo, solidMat);
+  scene.add(cupMesh);
+
+  if (showWireframe) {
+    wireMesh = new THREE.Mesh(geo, wireMat);
+    scene.add(wireMesh);
+  }
+
+  // Keep orbit target centred on cup
+  controls.target.set(0, params.height / 2, 0);
+  controls.update();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// REBUILD LOGIC
+// ═══════════════════════════════════════════════════════════════════
+
+let rebuildTimer = null;
+
+function scheduleRebuild(delay = 180) {
+  clearTimeout(rebuildTimer);
+  rebuildTimer = setTimeout(doRebuild, delay);
+}
+
+function doRebuild() {
+  loadingEl.classList.add('visible');
+  statusEl.classList.remove('error');
+  statusEl.textContent = 'Computing…';
+
+  // Yield one frame so the loading indicator can paint
+  setTimeout(() => {
+    try {
+      const t0 = performance.now();
+      const { positions, indices } = buildCraterCup(params);
+      const dt = performance.now() - t0;
+
+      lastPositions = positions;
+      lastIndices   = indices;
+      updateMesh(positions, indices);
+
+      const tris = (indices.length / 3).toLocaleString();
+      statusEl.textContent = `${tris} triangles · ${dt.toFixed(0)} ms`;
+    } catch (e) {
+      statusEl.textContent = e.message;
+      statusEl.classList.add('error');
+    } finally {
+      loadingEl.classList.remove('visible');
+    }
+  }, 16);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// UI — SLIDER BUILDER
+// ═══════════════════════════════════════════════════════════════════
+
+const controlsEl = document.getElementById('controls');
+
+function fmt(v, step) {
+  if (step < 0.1)  return v.toFixed(2);
+  if (step < 1)    return v.toFixed(1);
+  return String(v);
+}
+
+function makeSlider({ label, key, min, max, step, note }) {
+  const v   = params[key];
+  const div = document.createElement('div');
+  div.className = 'control';
+  div.innerHTML = `
+    <div class="control-row">
+      <span class="control-label">${label}</span>
+      <span class="control-value" id="val-${key}">${fmt(v, step)}</span>
+    </div>
+    <input type="range" id="sl-${key}"
+           min="${min}" max="${max}" step="${step}" value="${v}">
+    ${note ? `<div class="control-note">${note}</div>` : ''}
+  `;
+  const input  = div.querySelector('input');
+  const valEl  = div.querySelector(`#val-${key}`);
+  input.addEventListener('input', () => {
+    const parsed = step % 1 === 0 ? parseInt(input.value) : parseFloat(input.value);
+    params[key]  = parsed;
+    valEl.textContent = fmt(parsed, step);
+    scheduleRebuild();
+  });
+  return div;
+}
+
+function makeGroup(title, sliders) {
+  const group  = document.createElement('div');
+  group.className = 'group';
+
+  const header = document.createElement('div');
+  header.className = 'group-header';
+  header.textContent = title;
+
+  const body   = document.createElement('div');
+  body.className = 'group-body';
+  sliders.forEach(s => body.appendChild(makeSlider(s)));
+
+  group.appendChild(header);
+  group.appendChild(body);
+  return group;
+}
+
+controlsEl.appendChild(makeGroup('Cup Shape', [
+  { label: 'Bottom Radius (mm)',   key: 'botOuterRadius', min: 10,  max: 80,    step: 0.5  },
+  { label: 'Top Radius (mm)',      key: 'topOuterRadius', min: 10,  max: 100,   step: 0.5  },
+  { label: 'Height (mm)',          key: 'height',         min: 40,  max: 250,   step: 1    },
+  { label: 'Wall Thickness (mm)',  key: 'wallThickness',  min: 0.5, max: 15,    step: 0.5  },
+  { label: 'Floor Thickness (mm)', key: 'floorThickness', min: 0.5, max: 15,    step: 0.5  },
+]));
+
+controlsEl.appendChild(makeGroup('Craters', [
+  { label: 'Number of Cells',      key: 'numCells',    min: 5,   max: 500,   step: 1   },
+  { label: 'Crater Depth (mm)',    key: 'craterDepth', min: 0,   max: 8,     step: 0.1 },
+  { label: 'Random Seed',          key: 'randomSeed',  min: 0,   max: 99999, step: 1   },
+]));
+
+controlsEl.appendChild(makeGroup('Profile', [
+  { label: 'Pool Floor Fraction',  key: 'poolFloor',     min: 0, max: 0.95, step: 0.01 },
+  { label: 'Barrier Fraction',     key: 'poolBarrier',   min: 0, max: 0.95, step: 0.01 },
+  { label: 'Cell Roundness (mm)',  key: 'cellRoundness', min: 0, max: 15,   step: 0.1  },
+]));
+
+controlsEl.appendChild(makeGroup('Bands', [
+  { label: 'Band Width (mm)',      key: 'bandWidth',      min: 0, max: 40, step: 0.5 },
+  { label: 'Band Transition (mm)', key: 'bandTransition', min: 0, max: 40, step: 0.5 },
+]));
+
+controlsEl.appendChild(makeGroup('Resolution', [
+  { label: 'Sections (horiz.)',    key: 'sections',     min: 30, max: 5000, step: 5,
+    note: 'Higher = slower rebuild' },
+  { label: 'Wall Segments (vert)', key: 'wallSegments', min: 30, max: 5000, step: 5,
+    note: 'Higher = slower rebuild' },
+]));
+
+// ── Buttons ──────────────────────────────────────────────────────────
+
+document.getElementById('btn-rebuild').addEventListener('click', doRebuild);
+
+document.getElementById('btn-wireframe').addEventListener('click', function () {
+  showWireframe = !showWireframe;
+  this.textContent = showWireframe ? 'Wireframe: On' : 'Wireframe';
+  this.classList.toggle('active', showWireframe);
+
+  if (!cupMesh || !lastPositions) return;
+  if (showWireframe && !wireMesh) {
+    wireMesh = new THREE.Mesh(cupMesh.geometry, wireMat);
+    scene.add(wireMesh);
+  } else if (!showWireframe && wireMesh) {
+    scene.remove(wireMesh);
+    wireMesh.geometry.dispose();
+    wireMesh = null;
+  }
+});
+
+document.getElementById('btn-export').addEventListener('click', () => {
+  if (!lastPositions) { alert('Nothing to export — rebuild first.'); return; }
+  const buf  = exportBinarySTL(lastPositions, lastIndices);
+  const blob = new Blob([buf], { type: 'application/octet-stream' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = 'crater_cup.stl';
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// RESIZE + RENDER LOOP
+// ═══════════════════════════════════════════════════════════════════
+
+const ro = new ResizeObserver(() => {
+  const w = viewport.clientWidth, h = viewport.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+});
+ro.observe(viewport);
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+animate();
+doRebuild();   // initial build on load
+</script>
+
+</body>
+</html>
